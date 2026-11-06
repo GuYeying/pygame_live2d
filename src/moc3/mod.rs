@@ -12,7 +12,7 @@ mod compose;
 mod counts;
 mod deformers;
 mod draw_order_groups;
-mod drawable;
+pub mod drawable;
 mod glues;
 mod header;
 mod ids;

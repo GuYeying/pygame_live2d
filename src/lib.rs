@@ -49,6 +49,7 @@ pub mod json;
 /// Parsers and mesh builders for `.moc3` model data.
 pub mod moc3;
 /// Motion playback against a [`ModelRuntime`].
+pub mod mask;
 pub mod motion;
 pub use crate::json::Motion3;
 /// Renderer-facing helpers and optional backend implementations.
