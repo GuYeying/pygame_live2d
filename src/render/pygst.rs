@@ -44,11 +44,14 @@ impl std::error::Error for RenderError {}
 pub type RenderResult<T> = std::result::Result<T, RenderError>;
 
 /// masked 双纹理 WGSL：色纹理 × 蒙版纹理 alpha 相乘（蒙版区域外
-/// alpha=0 自动透明）。binding 0 = MVP、1/2 = 色纹理+采样、3/4 =
-/// 蒙版纹理+采样。蒙版段/整模型段共用同一条管线（白纹理 = 恒等蒙版）。
+/// alpha=0 自动透明）× 顶点色（每 drawable 不透明度乘 alpha——Cubism
+/// 隐藏部件变体 op=0 全靠它消隐，漏乘 = 多出的肢体）。binding 0 =
+/// MVP+顶点色、1/2 = 色纹理+采样、3/4 = 蒙版纹理+采样。蒙版段/整模型
+/// 段共用同一条管线（白纹理 = 恒等蒙版）。
 const MASKED_WGSL: &str = r#"
 struct Mvp {
     m: mat4x4<f32>,
+    color: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> mvp: Mvp;
 @group(0) @binding(1) var color_tex: texture_2d<f32>;
@@ -79,7 +82,7 @@ fn vs_main(
 fn fs_main(i: VsOut) -> @location(0) vec4<f32> {
     let c = textureSample(color_tex, color_samp, i.uv);
     let m = textureSample(mask_tex, mask_samp, i.muv);
-    return vec4<f32>(c.rgb, c.a * m.a);
+    return vec4<f32>(c.rgb * mvp.color.rgb, c.a * m.a * mvp.color.a);
 }
 "#;
 
@@ -126,7 +129,7 @@ fn pipeline() -> RenderResult<&'static MaskedPipeline> {
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
-                        min_binding_size: wgpu::BufferSize::new(64),
+                        min_binding_size: wgpu::BufferSize::new(80),
                     },
                     count: None,
                 },
@@ -352,20 +355,32 @@ fn upload_mesh(device: &wgpu::Device, verts: &[f32], indices: &[u16]) -> (Arc<wg
     (vbo, ibo)
 }
 
+/// bind group（uniform = MVP 16 + 顶点色 4 共 20 f32——每 draw 一次
+/// 内联小 buffer，与引擎 encode 的一次性资源定约同款）。
 fn make_bind_group(
     device: &wgpu::Device,
     pl: &MaskedPipeline,
-    mvp: &Arc<wgpu::Buffer>,
+    mvp: &[f32; 16],
+    rgba: [f32; 4],
     color_view: &Arc<wgpu::TextureView>,
     mask_view: &Arc<wgpu::TextureView>,
 ) -> wgpu::BindGroup {
+    use wgpu::util::DeviceExt;
+    let mut uni = [0f32; 20];
+    uni[..16].copy_from_slice(mvp);
+    uni[16..20].copy_from_slice(&rgba);
+    let uni_buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("pygamest_l2d_uni"),
+        contents: &f32_bytes(&uni),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         layout: &pl.bgl,
         entries: &[
             wgpu::BindGroupEntry {
                 binding: 0,
                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: mvp,
+                    buffer: &uni_buf,
                     offset: 0,
                     size: None,
                 }),
@@ -416,9 +431,9 @@ fn begin_pass<'a>(
     })
 }
 
-/// Live2D 渲染器（每对象一个——自持注入面 + 蒙版工作面池 + 内容锚定）。
+/// Live2D 渲染器（每对象一个——蒙版工作面池 + 内容锚定；产物面不
+/// 绑定，draw 时传入——同一对象可画任意尺寸/多个面）。
 pub struct Live2DRenderer {
-    surface: Arc<SfSurface>,
     /// 模型纹理 Surface 化缓存（惰性一次）
     textures: RefCell<Option<Vec<Arc<SfSurface>>>>,
     mask_pool: RefCell<Vec<Arc<SfSurface>>>,
@@ -431,8 +446,8 @@ pub struct Live2DRenderer {
 }
 
 impl Live2DRenderer {
-    /// 注入面 + 模型 → 渲染器（内容包围盒此刻定锚）。
-    pub fn new(surface: Arc<SfSurface>, model: &RuntimeModel) -> Self {
+    /// 模型 → 渲染器（内容包围盒此刻定锚；产物面 draw 时传）。
+    pub fn new(model: &RuntimeModel) -> Self {
         let (mut min_x, mut min_y, mut max_x, mut max_y) =
             (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
         let mut any = false;
@@ -456,7 +471,6 @@ impl Live2DRenderer {
             (0.0, 0.0, 1.0)
         };
         Self {
-            surface,
             textures: RefCell::new(None),
             mask_pool: RefCell::new(Vec::new()),
             color_pool: RefCell::new(Vec::new()),
@@ -467,23 +481,26 @@ impl Live2DRenderer {
         }
     }
 
-    /// 注入面句柄（产物纹理本体——调试/对齐用）。
-    pub fn surface(&self) -> &Arc<SfSurface> {
-        &self.surface
-    }
-
-    /// 全管线自理绘制（每帧调用——先 update_meshes 后 draw）。
+    /// 全管线自理绘制（每帧调用——先 update_meshes 后 draw；surface =
+    /// 本次产物面，每帧可换）。
     ///
     /// 三段 encoder（同 submit 有序）：每组 ① 蒙版白形 → ② masked 双
-    /// 纹理（组内 render_order 排序）；③ 整模型落注入面（render_order
+    /// 纹理（组内 render_order 排序）；③ 整模型落产物面（render_order
     /// 混排，masked 组以 C 面 quad 在组首绘位合成）。产物面每帧透明
     /// 重画——"draw 一次 = 重画一次人物"。
-    pub fn draw(&self, model: &RuntimeModel, x: f32, y: f32, scale: f32) -> RenderResult<()> {
+    pub fn draw(
+        &self,
+        surface: &Arc<SfSurface>,
+        model: &RuntimeModel,
+        x: f32,
+        y: f32,
+        scale: f32,
+    ) -> RenderResult<()> {
         let gpu = gpu_info().ok_or_else(|| {
             RenderError("GPU 未就绪（须先 pygame.display.set_mode 建立 GPU 会话）".into())
         })?;
         let pl = pipeline()?;
-        let (sw, sh) = self.surface.size();
+        let (sw, sh) = surface.size();
 
         // 模型纹理惰性 Surface 化（一次）
         if self.textures.borrow().is_none() {
@@ -528,7 +545,7 @@ impl Live2DRenderer {
         let mask_surfs: Vec<Arc<SfSurface>> = self.mask_pool.borrow().clone();
         let color_surfs: Vec<Arc<SfSurface>> = self.color_pool.borrow().clone();
 
-        // MVP uniform（恒等 + 内容仿射）
+        // MVP（恒等 + 内容仿射）——uniform = MVP+顶点色 每 draw 内联
         let idm = identity_mvp();
         let mvp = content_mvp(
             self.content_cx,
@@ -540,22 +557,6 @@ impl Live2DRenderer {
             sw as f32,
             sh as f32,
         );
-        let idm_buf = Arc::new({
-            use wgpu::util::DeviceExt;
-            gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("pygamest_l2d_idm"),
-                contents: &f32_bytes(&idm),
-                usage: wgpu::BufferUsages::UNIFORM,
-            })
-        });
-        let content_buf = Arc::new({
-            use wgpu::util::DeviceExt;
-            gpu.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("pygamest_l2d_content_mvp"),
-                contents: &f32_bytes(&mvp),
-                usage: wgpu::BufferUsages::UNIFORM,
-            })
-        });
 
         let mut enc = gpu
             .device
@@ -583,7 +584,14 @@ impl Live2DRenderer {
                     }
                     let (vbo, ibo) =
                         upload_mesh(&gpu.device, &clip_mesh_verts(m, plan), m.indices());
-                    let bg = make_bind_group(&gpu.device, pl, &idm_buf, &white_view, &identity_view);
+                    let bg = make_bind_group(
+                        &gpu.device,
+                        pl,
+                        &idm,
+                        [1.0, 1.0, 1.0, m.opacity().clamp(0.0, 1.0)],
+                        &white_view,
+                        &white_view,
+                    );
                     rp.set_bind_group(0, &bg, &[]);
                     rp.set_vertex_buffer(0, vbo.slice(..));
                     rp.set_index_buffer(ibo.slice(..), wgpu::IndexFormat::Uint16);
@@ -613,7 +621,14 @@ impl Live2DRenderer {
                     let (vbo, ibo) =
                         upload_mesh(&gpu.device, &clip_mesh_verts(m, plan), m.indices());
                     let color_view = tex.texture_view();
-                    let bg = make_bind_group(&gpu.device, pl, &idm_buf, &color_view, &mask_view);
+                    let bg = make_bind_group(
+                        &gpu.device,
+                        pl,
+                        &idm,
+                        [1.0, 1.0, 1.0, m.opacity().clamp(0.0, 1.0)],
+                        &color_view,
+                        &mask_view,
+                    );
                     rp.set_bind_group(0, &bg, &[]);
                     rp.set_vertex_buffer(0, vbo.slice(..));
                     rp.set_index_buffer(ibo.slice(..), wgpu::IndexFormat::Uint16);
@@ -624,7 +639,7 @@ impl Live2DRenderer {
 
         // ── ③ 整模型段（产物面透明重画；masked 组以 C quad 组首绘位合成）──
         {
-            let out_view = self.surface.texture_view();
+            let out_view = surface.texture_view();
             let mut rp = begin_pass(&mut enc, "pygamest_l2d_model", &out_view);
             rp.set_pipeline(&pl.pipeline);
             let mut ordered: Vec<_> = model.runtime().meshes().iter().enumerate().collect();
@@ -668,8 +683,14 @@ impl Live2DRenderer {
                         &[0u16, 1, 2, 0, 2, 3],
                     );
                     let color_view = cs.texture_view();
-                    let bg =
-                        make_bind_group(&gpu.device, pl, &content_buf, &color_view, &identity_view);
+                    let bg = make_bind_group(
+                        &gpu.device,
+                        pl,
+                        &mvp,
+                        [1.0, 1.0, 1.0, 1.0],
+                        &color_view,
+                        &identity_view,
+                    );
                     rp.set_bind_group(0, &bg, &[]);
                     rp.set_vertex_buffer(0, vbo.slice(..));
                     rp.set_index_buffer(ibo.slice(..), wgpu::IndexFormat::Uint16);
@@ -684,7 +705,14 @@ impl Live2DRenderer {
                 };
                 let (vbo, ibo) = upload_mesh(&gpu.device, &plain_mesh_verts(m), m.indices());
                 let color_view = tex.texture_view();
-                let bg = make_bind_group(&gpu.device, pl, &content_buf, &color_view, &identity_view);
+                let bg = make_bind_group(
+                    &gpu.device,
+                    pl,
+                    &mvp,
+                    [1.0, 1.0, 1.0, m.opacity().clamp(0.0, 1.0)],
+                    &color_view,
+                    &identity_view,
+                );
                 rp.set_bind_group(0, &bg, &[]);
                 rp.set_vertex_buffer(0, vbo.slice(..));
                 rp.set_index_buffer(ibo.slice(..), wgpu::IndexFormat::Uint16);
