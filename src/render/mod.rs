@@ -8,3 +8,8 @@ pub mod common;
 
 #[cfg(feature = "wgpu")]
 pub mod wgpu;
+
+/// pygamest 生态落地渲染管线（蒙版纹理方案；产物面=用户注入 Surface
+/// ——pygame-rs 零渲染编排，只做宏绑定）。
+#[cfg(feature = "render")]
+pub mod pygst;

@@ -10,6 +10,12 @@ publish = false
 [features]
 default = []
 wgpu = ["dep:wgpu"]
+# pygamest 生态落地渲染管线（render/pygst.rs）：蒙版纹理方案 GPU 落地
+# ——依赖 starfish-pygame 的 Surface 类型面（产物面=用户注入面）；
+# wgpu 版本契约 30.0.x 与 starfish-render 同源解析（单实例，类型互通）。
+# dep:wgpu 直启依赖（不走 wgpu feature——上游 render/wgpu 模块依赖
+# 不存在的 gpui_wgpu，属死代码，保持关闭）
+render = ["dep:wgpu", "dep:starfish-pygame"]
 benchmark-support = []
 
 [dependencies]
@@ -19,6 +25,7 @@ serde_json = "1.0.151"
 thiserror = "2"
 wgpu = { version = "30.0.0", features = ["noop"], optional = true }
 rapidhash = { version = "4.5.1", features = ["unsafe"] }
+starfish-pygame = { git = "https://github.com/GuYeying/starfish", optional = true }
 
 [[bench]]
 name = "deformer_composition"
