@@ -452,7 +452,7 @@ impl Live2DRenderer {
             RenderError("GPU 未就绪（须先 pygame.display.set_mode 建立 GPU 会话）".into())
         })?;
         let pl = pipeline()?;
-        let (sw, sh) = surface.size();
+        let (sw, sh) = surface.texture().size();
 
         // 模型纹理惰性 Surface 化（一次）
         if self.textures.borrow().is_none() {
@@ -476,7 +476,7 @@ impl Live2DRenderer {
         }
         let white = self.white.borrow().clone().expect("白面刚确保");
         let white_view = white.texture_view();
-        let white_key = white.cache_key() as u64;
+        let white_key = Arc::as_ptr(&white) as *const u8 as u64;
 
         // 蒙版组计划（归一域）+ 面池扩容 + Arc 快照
         let meshes = model.runtime().meshes();
@@ -512,8 +512,8 @@ impl Live2DRenderer {
         for (gi, plan) in plans.iter().enumerate() {
             let mg = mask_surfs[gi].clone();
             let cs = color_surfs[gi].clone();
-            let mg_key = mg.cache_key() as u64;
-            let cs_key = cs.cache_key() as u64;
+            let mg_key = Arc::as_ptr(&mg) as *const u8 as u64;
+            let cs_key = Arc::as_ptr(&cs) as *const u8 as u64;
             let mut mask_recs = Vec::new();
             let mut masked_recs = Vec::new();
             // ① 蒙版白形（蒙版面自采样 = usage 冲突——蒙版槽以白代之）
@@ -586,7 +586,7 @@ impl Live2DRenderer {
                     ]);
                 }
                 idxs.extend_from_slice(m.indices());
-                let tex_key = tex.cache_key() as u64;
+                let tex_key = Arc::as_ptr(&tex) as *const u8 as u64;
                 masked_recs.push(PoolDraw {
                     vbase: base_v,
                     icount: m.indices().len() as u32,
@@ -617,7 +617,7 @@ impl Live2DRenderer {
                 }
                 composited.push(gi);
                 let cs = color_surfs[gi].clone();
-                let cs_key = cs.cache_key() as u64;
+                let cs_key = Arc::as_ptr(&cs) as *const u8 as u64;
                 // C 面 quad：span 角点（归一域，MVP 映射）+ clip uv
                 //（margin 域直读——蒙版段 NDC 烘焙时已预补偿 y 翻转）
                 let mx = (plan.max_x - plan.min_x) * 0.25;
@@ -670,7 +670,7 @@ impl Live2DRenderer {
                 ]);
             }
             idxs.extend_from_slice(m.indices());
-            let tex_key = tex.cache_key() as u64;
+            let tex_key = Arc::as_ptr(&tex) as *const u8 as u64;
             model_draws.push(PoolDraw {
                 vbase: base_v,
                 icount: m.indices().len() as u32,
@@ -742,7 +742,7 @@ impl Live2DRenderer {
             let csurf = &color_surfs[gi];
             let mask_view = mg.texture_view();
             let cs_view = csurf.texture_view();
-            let mg_key = mg.cache_key() as u64;
+            let mg_key = Arc::as_ptr(&mg) as *const u8 as u64;
             // ① 蒙版白形（蒙版面自采样 = usage 冲突——蒙版槽以白代之）
             {
                 let mut rp = begin_pass(&mut enc, "pygamest_l2d_mask", &mask_view);
@@ -761,7 +761,7 @@ impl Live2DRenderer {
                         d.mask_key,
                     );
                     rp.set_bind_group(0, &bg, &[]);
-                    rp.draw_indexed(d.ioff..d.ioff + d.icount, d.vbase, 0..1);
+                    rp.draw_indexed(d.ioff..d.ioff + d.icount, d.vbase as i32, 0..1);
                 }
             }
             // ② masked 双纹理
@@ -785,7 +785,7 @@ impl Live2DRenderer {
                     rp.set_bind_group(0, &bg, &[]);
                     rp.set_vertex_buffer(0, vpool.slice(..));
                     rp.set_index_buffer(ipool.slice(..), wgpu::IndexFormat::Uint16);
-                    rp.draw_indexed(d.ioff..d.ioff + d.icount, d.vbase, 0..1);
+                    rp.draw_indexed(d.ioff..d.ioff + d.icount, d.vbase as i32, 0..1);
                 }
             }
         }
@@ -810,7 +810,7 @@ impl Live2DRenderer {
                     d.mask_key,
                 );
                 rp.set_bind_group(0, &bg, &[]);
-                rp.draw_indexed(d.ioff..d.ioff + d.icount, d.vbase, 0..1);
+                rp.draw_indexed(d.ioff..d.ioff + d.icount, d.vbase as i32, 0..1);
             }
         }
 
