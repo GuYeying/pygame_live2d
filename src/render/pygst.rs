@@ -618,8 +618,9 @@ impl Live2DRenderer {
                 composited.push(gi);
                 let cs = color_surfs[gi].clone();
                 let cs_key = Arc::as_ptr(&cs) as *const u8 as u64;
-                // C 面 quad：span 角点（归一域，MVP 映射）+ clip uv
-                //（margin 域直读——蒙版段 NDC 烘焙时已预补偿 y 翻转）
+                // C 面 quad：margin 反演外扩位置 + 全幅 UV [0,1]（与
+                // margin-expanded positions 配对——C 面含透明 margin 区，
+                // 内容在 [0.167,0.833] 子域精确落位）
                 let mx = (plan.max_x - plan.min_x) * 0.25;
                 let my = (plan.max_y - plan.min_y) * 0.25;
                 let corners = [
@@ -628,12 +629,7 @@ impl Live2DRenderer {
                     plan.max_x + mx, plan.max_y + my,
                     plan.min_x - mx, plan.max_y + my,
                 ];
-                let quv = [
-                    plan.min_x * plan.k_x + plan.c_x, plan.min_y * plan.k_y + plan.c_y,
-                    plan.max_x * plan.k_x + plan.c_x, plan.min_y * plan.k_y + plan.c_y,
-                    plan.max_x * plan.k_x + plan.c_x, plan.max_y * plan.k_y + plan.c_y,
-                    plan.min_x * plan.k_x + plan.c_x, plan.max_y * plan.k_y + plan.c_y,
-                ];
+                let quv = [0.0f32, 0.0, 1.0, 0.0, 1.0, 1.0, 0.0, 1.0];
                 let base_v = (voff_f / 7) as u32;
                 let ioff = idxs.len() as u32;
                 for k in 0..4 {
