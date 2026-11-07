@@ -854,7 +854,9 @@ impl Live2DRenderer {
         let buf = Arc::new(device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("pygamest_l2d_uni"),
             contents: bytes,
-            usage: wgpu::BufferUsages::UNIFORM,
+            // COPY_DST = content_buf 每帧 write_buffer 原地更新的前置
+            // （UNIFORM 单用途时校验拦截——上传静默失败，MVP 冻结在首帧）
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         }));
         *slot.borrow_mut() = Some(buf.clone());
         buf

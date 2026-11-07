@@ -93,6 +93,22 @@ impl DecodedTexture {
     pub fn rgba(&self) -> &[u8] {
         &self.rgba
     }
+
+    /// Decodes an encoded image byte buffer (PNG, and any other format
+    /// enabled in the `image` feature set) into tightly packed RGBA8.
+    ///
+    /// Companion for [`RuntimeModelAssets`] workflows where texture bytes
+    /// are supplied by the caller (custom I/O layers, encrypted bundles,
+    /// in-memory payloads) instead of being read from the model directory.
+    pub fn from_encoded_bytes(bytes: &[u8]) -> Result<Self, image::ImageError> {
+        let image = image::load_from_memory(bytes)?;
+        let rgba = image.to_rgba8();
+        Ok(Self::new(
+            rgba.width(),
+            rgba.height(),
+            rgba.into_raw(),
+        ))
+    }
 }
 
 #[derive(Debug)]
@@ -198,6 +214,14 @@ pub fn load_model_runtime_from_assets(
     assets: RuntimeModelAssets,
 ) -> Result<RuntimeModel, AssetLoadError> {
     parse_model_assets(assets)?.into_runtime_model()
+}
+
+/// Builds a static default-pose snapshot exclusively from caller-owned assets.
+///
+/// Filesystem-free companion of [`load_model_runtime_from_assets`] for the
+/// snapshot use case (import tools, previews, tests).
+pub fn load_model_from_assets(assets: RuntimeModelAssets) -> Result<DefaultModel, AssetLoadError> {
+    parse_model_assets(assets)?.into_default_model()
 }
 
 #[derive(Debug, Clone)]
