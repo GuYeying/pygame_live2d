@@ -133,9 +133,12 @@ fn pipeline() -> RenderResult<&'static MaskedPipeline> {
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
+                    // VERTEX|FRAGMENT（GLES 兼容定约 2026-11-08）：无
+                    // compute pass 却标 COMPUTE——无 compute 能力的 GLES
+                    // 栈（模拟器 gfxstream 转译）bgl 创建即拒 → live2d
+                    // 静默空缺（实测定案）；uniform 亦无 compute 消费
                     visibility: wgpu::ShaderStages::VERTEX
-                        | wgpu::ShaderStages::FRAGMENT
-                        | wgpu::ShaderStages::COMPUTE,
+                        | wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
