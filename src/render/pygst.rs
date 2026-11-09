@@ -366,6 +366,9 @@ type BgKey = (u8, u64, u64);
 const KIND_IDENTITY: u8 = 0;
 const KIND_CONTENT: u8 = 1;
 
+/// 顶点步长（字节）——pos2+uv2+clip2+alpha1 = 7×f32。
+const VERT_STRIDE_BYTES: u64 = 7 * 4;
+
 /// Live2D 渲染器（每对象一个——蒙版工作面池 + 内容锚定 + 稳态缓存）。
 pub struct Live2DRenderer {
     /// 模型纹理 Surface 化缓存（惰性一次）
@@ -760,7 +763,17 @@ impl Live2DRenderer {
                         d.mask_key,
                     );
                     rp.set_bind_group(0, &bg, &[]);
-                    rp.draw_indexed(d.ioff..d.ioff + d.icount, d.vbase as i32, 0..1);
+                    // GLES 兼容（2026-11-10 实测定案）：base_vertex≠0 走
+                    // glDrawElementsInstancedBaseVertex（GLES 3.2 API）——
+                    // 模拟器 gfxstream 等无实现栈静默丢弃绘制（真机实证：
+                    // 全场只剩 vbase=0 的 drawable 可见）。vbase 折进顶点
+                    // 缓冲切片（set_vertex_buffer 恒 GLES 3.0 核心），
+                    // base 恒 0
+                    rp.set_vertex_buffer(
+                        0,
+                        vpool.slice((d.vbase as u64 * VERT_STRIDE_BYTES)..),
+                    );
+                    rp.draw_indexed(d.ioff..d.ioff + d.icount, 0, 0..1);
                 }
             }
             // ② masked 双纹理
@@ -784,7 +797,17 @@ impl Live2DRenderer {
                     rp.set_bind_group(0, &bg, &[]);
                     rp.set_vertex_buffer(0, vpool.slice(..));
                     rp.set_index_buffer(ipool.slice(..), wgpu::IndexFormat::Uint16);
-                    rp.draw_indexed(d.ioff..d.ioff + d.icount, d.vbase as i32, 0..1);
+                    // GLES 兼容（2026-11-10 实测定案）：base_vertex≠0 走
+                    // glDrawElementsInstancedBaseVertex（GLES 3.2 API）——
+                    // 模拟器 gfxstream 等无实现栈静默丢弃绘制（真机实证：
+                    // 全场只剩 vbase=0 的 drawable 可见）。vbase 折进顶点
+                    // 缓冲切片（set_vertex_buffer 恒 GLES 3.0 核心），
+                    // base 恒 0
+                    rp.set_vertex_buffer(
+                        0,
+                        vpool.slice((d.vbase as u64 * VERT_STRIDE_BYTES)..),
+                    );
+                    rp.draw_indexed(d.ioff..d.ioff + d.icount, 0, 0..1);
                 }
             }
         }
@@ -809,7 +832,12 @@ impl Live2DRenderer {
                     d.mask_key,
                 );
                 rp.set_bind_group(0, &bg, &[]);
-                rp.draw_indexed(d.ioff..d.ioff + d.icount, d.vbase as i32, 0..1);
+                // GLES 兼容（同上——vbase 折进顶点缓冲切片，base 恒 0）
+                rp.set_vertex_buffer(
+                    0,
+                    vpool.slice((d.vbase as u64 * VERT_STRIDE_BYTES)..),
+                );
+                rp.draw_indexed(d.ioff..d.ioff + d.icount, 0, 0..1);
             }
         }
 
