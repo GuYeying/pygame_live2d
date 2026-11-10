@@ -6,7 +6,7 @@ pygamest 生态 Live2D/Cubism 运行时适配层——**mocari v0.4.0 vendored**
 ## 溯源
 
 - 上游 = [Eatgrapes/Mocari](https://github.com/Eatgrapes/Mocari)（MIT，
-  纯 Rust Live2D/Cubism 兼容运行时；**上游仓已删除**）
+  纯 Rust Live2D/Cubism 兼容运行时；）
 - 本仓源 = LunaMate（TR0MXI）内嵌副本 `crates/lunamate-mocari`（MIT 同
   许可再分发），恢复其 upstream 形态的 `wgpu 30` 可选依赖（LunaMate
   fork 曾替换为 gpui_wgpu——zed 生态专属，此处还原）
