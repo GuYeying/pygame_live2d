@@ -1,6 +1,6 @@
 [package]
 name = "pygame_live2d"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2024"
 description = "pygamest 生态 Live2D/Cubism 运行时适配层——mocari v0.4.0 vendored（MIT，Eatgrapes/Mocari 经 LunaMate 内嵌副本溯源）"
 license = "MIT"
